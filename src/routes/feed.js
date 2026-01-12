@@ -42,7 +42,6 @@ feedRouter.get("/feed", authMiddleware, async (req, res) => {
       totalUsers: users.length
     });
   } catch (error) {
-    console.error("Error in /feed route:", error.message);
     res.status(500).send({ message: "Internal server error while fetching feed" });
   }
 });
@@ -69,7 +68,6 @@ feedRouter.get("/feed/user/:userId", authMiddleware, async (req, res) => {
       user: user
     });
   } catch (error) {
-    console.error("Error in /feed/user/:userId route:", error.message);
     res.status(500).send({ message: "Internal server error while fetching user" });
   }
 });

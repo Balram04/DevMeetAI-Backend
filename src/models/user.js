@@ -22,9 +22,30 @@ const userSchema = new mongoose.Schema(
       lowercase: true
     },
     password: {
-      type: String,
-      required: true,
-      minlength: 8
+    type: String,
+    required: [true, 'Password is required'],
+    minlength: [6, 'Password must be at least 6 characters'],
+    select: false // Don't include password in queries by default
+  },
+    
+    // Email Verification
+    isEmailVerified: {
+      type: Boolean,
+      default: false
+    },
+    emailVerificationOTP: {
+      type: String
+    },
+    otpExpiry: {
+      type: Date
+    },
+    
+    // Password Reset
+    resetPasswordToken: {
+      type: String
+    },
+    resetPasswordExpiry: {
+      type: Date
     },
     
     age: {
@@ -36,13 +57,54 @@ const userSchema = new mongoose.Schema(
     about: {
       type: String
     },
+    bio: {
+      type: String,
+      maxlength: 500
+    },
+    
+    // Learning & Teaching
+    wantsToLearn: {
+      type: [String],
+      default: []
+    },
+    canTeach: {
+      type: [String],
+      default: []
+    },
+    
     skills: {
       type: [String]
     },
+    
+    // Education
+    college: {
+      type: String
+    },
+    year: {
+      type: String,
+      enum: ['1st Year', '2nd Year', '3rd Year', '4th Year', 'Alumni', 'Other']
+    },
+    
+    // Social Links
+    socialLinks: {
+      linkedin: { type: String },
+      github: { type: String },
+      twitter: { type: String },
+      instagram: { type: String },
+      portfolio: { type: String }
+    },
+    
     photoUrl: {
       type: String,
       default: ""
     },
+    
+    // Admin
+    isAdmin: {
+      type: Boolean,
+      default: false
+    },
+    
     date: {
       type: Date,
       default: Date.now

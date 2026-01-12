@@ -1,88 +1,87 @@
 require('dotenv').config();
 const express = require('express');
-const connectDb = require('./config/db');
-const app = express();
-const cors =require('cors'); // Import CORS
+const http = require('http');
+const cors = require('cors');
 const cookieParser = require('cookie-parser');
-const http =require("http")
-const HandleSocket = require('./src/routes/Socket'); // Import the Socket handler
+const connectDb = require('./config/db');
+const HandleSocket = require('./src/routes/Socket');
 
-// Trust proxy for production (important for Render)
+const app = express();
+
+// Middleware
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
 
-
-app.use(cors({
-  origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : ['http://localhost:5173', 'http://localhost:5174'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
-  exposedHeaders: ['Set-Cookie'],
-  optionsSuccessStatus: 200
-})); // Use CORS middleware
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN
+      ? process.env.CORS_ORIGIN.split(',')
+      : ['http://localhost:5173', 'http://localhost:5174'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    exposedHeaders: ['Set-Cookie'],
+    optionsSuccessStatus: 200,
+  })
+);
 
 app.use(express.json());
-app.use(cookieParser()); // Use cookie-parser middleware
+app.use(cookieParser());
 
-// Health check endpoint for Render
+// Health & Root Routes
 app.get('/health', (req, res) => {
-  res.status(200).json({ 
-    status: 'OK', 
+  res.status(200).json({
+    status: 'OK',
     message: 'DevMeet Backend is running',
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || 'development',
   });
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
-  res.status(200).json({ 
+  res.status(200).json({
     message: 'DevMeet API Server',
     version: '1.0.0',
-    status: 'Running'
+    status: 'Running',
   });
 });
 
-// Signup route // Login route
+// Routes
 const authRouter = require('./src/routes/auth');
-//profile route
 const proRouter = require('./src/routes/profile');
-//connection request route
 const reqRouter = require('./src/routes/request');
-// feed route
 const feedRouter = require('./src/routes/feed');
-
-const userRouter =require('./src/routes/user');
+const userRouter = require('./src/routes/user');
+const matchRouter = require('./src/routes/match');
+const alumniRouter = require('./src/routes/alumni');
+const chatbotRouter = require('./src/routes/chatbot');
 
 app.use('/', authRouter);
 app.use('/', proRouter);
 app.use('/', reqRouter);
 app.use('/', feedRouter);
-app.use('/',userRouter);
+app.use('/', userRouter);
+app.use('/', matchRouter);
+app.use('/', alumniRouter);
+app.use('/', chatbotRouter);
 
-
+// WebSocket
 const server = http.createServer(app);
 HandleSocket(server);
 
-
-// Connect to the database
-connectDb()
-  .then(() => {
-    console.log('Database connection successful');
+// Server Startup
+const startServer = async () => {
+  try {
+    await connectDb();
     const PORT = process.env.PORT || 3000;
-    
-    // Always bind to 0.0.0.0 for deployed environments (like Render)
-    // Only use localhost for local development (port 3000)
-    const HOST = PORT == 3000 ? 'localhost' : '0.0.0.0';
-    
-    server.listen(PORT, HOST, () => {
-      console.log(`Server is running on ${HOST}:${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`Host binding: ${HOST}`);
+  
+    server.listen(PORT, () => {
+      // Server started successfully
     });
-  })
-  .catch((err) => {
-    console.error('Database connection failed:', err.message);
+  } catch (err) {
     process.exit(1);
-  });
+  }
+};
+
+startServer();

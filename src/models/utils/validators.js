@@ -23,6 +23,8 @@ const validprofiledata = (req) => {
       gender: true,
       about: true,
       photoUrl: true,
+      wantsToLearn: true,
+      canTeach: true,
   };
 
   const isEditAllowed = Object.keys(req.body).every((key) => {

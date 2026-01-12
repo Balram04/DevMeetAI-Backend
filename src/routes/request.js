@@ -74,7 +74,6 @@ requestRouter.post("/request/send/:status/:toUserId", authMiddleware, async (req
         });
 
     } catch (err) {
-        console.error("Error in send request:", err);
         res.status(500).json({
             message: "Something went wrong: " + err.message
         });
@@ -128,7 +127,6 @@ requestRouter.post("/request/review/:status/:requestId", authMiddleware, async (
         });
         
     } catch (err) {
-        console.error("Error in review request:", err);
         res.status(500).json({
             message: "Something went wrong: " + err.message
         });
@@ -182,7 +180,6 @@ requestRouter.delete("/request/cancel/:toUserId", authMiddleware, async (req, re
         });
         
     } catch (err) {
-        console.error("Error in cancel request:", err);
         res.status(500).json({
             message: "Internal Server Error: " + err.message,
         });
