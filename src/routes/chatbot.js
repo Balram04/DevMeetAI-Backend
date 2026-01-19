@@ -2,6 +2,7 @@ const express = require('express');
 const { authMiddleware } = require('../middlewares/auth');
 const { chatWithAIStream, resetChatSession, getRecommendations, generateIcebreaker } = require('../services/aiService');
 const User = require('../models/user');
+const { normalizeSkillKeyList } = require('../utils/skillNormalization');
 
 const chatbotRouter = express.Router();
 
@@ -113,12 +114,15 @@ chatbotRouter.post('/api/ai/icebreaker', authMiddleware, async (req, res) => {
       });
     }
 
+    const currentWantsToLearnKeys = new Set(normalizeSkillKeyList(currentUser.wantsToLearn || []));
+    const currentCanTeachKeys = new Set(normalizeSkillKeyList(currentUser.canTeach || []));
+
     const commonInterests = [
-      ...(currentUser.wantsToLearn || []).filter(item => 
-        (peer.canTeach || []).includes(item)
+      ...(peer.canTeach || []).filter((skill) =>
+        currentWantsToLearnKeys.has(String(skill || '').trim().toLowerCase())
       ),
-      ...(currentUser.canTeach || []).filter(item => 
-        (peer.wantsToLearn || []).includes(item)
+      ...(peer.wantsToLearn || []).filter((skill) =>
+        currentCanTeachKeys.has(String(skill || '').trim().toLowerCase())
       )
     ];
 

@@ -1,0 +1,10 @@
+services:
+  api:
+    # Jenkins will deploy by pulling the image tag you push.
+    # Example: balram04/devmeet-backend:latest
+    image: ${IMAGE_NAME:-yourdockerhubuser/devmeet-backend}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    ports:
+      - "3000:3000"

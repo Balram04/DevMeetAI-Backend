@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const User = require("../models/user");
+const PendingUser = require("../models/pendingUser");
 const { signupvalidation } = require("../models/utils/validators");
 const { generateOTP, sendOTPEmail, sendWelcomeEmail, generateResetToken, sendPasswordResetEmail } = require("../services/emailService");
 const checkAuth = require("../middlewares/auth");
@@ -63,37 +64,41 @@ authRouter.post("/signup", async (req, res) => {
           message: "Email already registered and verified" 
         });
       } else {
-        // User exists but not verified - send new OTP
-        const otp = generateOTP();
-        const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-        
-        existingUser.emailVerificationOTP = otp;
-        existingUser.otpExpiry = otpExpiry;
-        await existingUser.save();
-        
-        // Try to send email, but don't fail if it errors
-        const isDevelopment = process.env.NODE_ENV !== 'production';
-        try {
-          await sendOTPEmail(email, otp, firstname);
+        // Legacy unverified user found.
+        // To enforce "do not store users until verified", remove the legacy record and proceed with pending signup.
+        await User.findByIdAndDelete(existingUser._id);
+      }
+    }
+
+    // If a pending signup already exists for this email, replace its OTP.
+    const existingPending = await PendingUser.findOne({ email });
+    if (existingPending) {
+      const otp = generateOTP();
+      const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      existingPending.emailVerificationOTP = otp;
+      existingPending.otpExpiry = otpExpiry;
+      await existingPending.save();
+
+      const isDevelopment = process.env.NODE_ENV !== 'production';
+      try {
+        await sendOTPEmail(email, otp, existingPending.firstname || firstname);
+        return res.status(200).json({
+          success: true,
+          message: "OTP resent to your email",
+          requiresVerification: true,
+        });
+      } catch (emailError) {
+        if (isDevelopment) {
           return res.status(200).json({
             success: true,
-            message: "OTP resent to your email",
-            requiresVerification: true
+            message: "OTP generated (email service unavailable)",
+            requiresVerification: true,
+            devMode: true,
+            otp: otp, // Only in development!
           });
-        } catch (emailError) {
-          // In development, return OTP in response so user can still verify
-          if (isDevelopment) {
-            return res.status(200).json({
-              success: true,
-              message: "OTP generated (email service unavailable)",
-              requiresVerification: true,
-              devMode: true,
-              otp: otp // Only in development!
-            });
-          } else {
-            throw emailError; // In production, fail
-          }
         }
+        throw emailError;
       }
     }
 
@@ -103,7 +108,8 @@ authRouter.post("/signup", async (req, res) => {
     const otp = generateOTP();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    const user = new User({
+    // Store pending signup ONLY (do not create User until email verified)
+    const pendingUser = new PendingUser({
       firstname,
       lastname,
       email,
@@ -121,11 +127,10 @@ authRouter.post("/signup", async (req, res) => {
       canTeach,
       socialLinks,
       emailVerificationOTP: otp,
-      otpExpiry: otpExpiry,
-      isEmailVerified: false
+      otpExpiry: otpExpiry
     });
 
-    await user.save();
+    await pendingUser.save();
     
     // Send OTP email - handle failures gracefully in development
     const isDevelopment = process.env.NODE_ENV !== 'production';
@@ -133,7 +138,7 @@ authRouter.post("/signup", async (req, res) => {
       await sendOTPEmail(email, otp, firstname);
       res.status(201).json({ 
         success: true,
-        message: "User registered successfully. Please check your email for OTP.",
+        message: "OTP sent. Please verify your email to complete signup.",
         requiresVerification: true
       });
     } catch (emailError) {
@@ -141,14 +146,14 @@ authRouter.post("/signup", async (req, res) => {
       if (isDevelopment) {
         res.status(201).json({ 
           success: true,
-          message: "User registered successfully. OTP generated (email service unavailable)",
+          message: "OTP generated (email service unavailable). Verify to complete signup.",
           requiresVerification: true,
           devMode: true,
           otp: otp // Only in development!
         });
       } else {
-        // In production, delete the user and fail
-        await User.findByIdAndDelete(user._id);
+        // In production, delete pending signup and fail
+        await PendingUser.findByIdAndDelete(pendingUser._id);
         throw emailError;
       }
     }
@@ -173,24 +178,17 @@ authRouter.post("/verify-otp", async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
-    
-    if (!user) {
+    const pending = await PendingUser.findOne({ email }).select('+password');
+
+    if (!pending) {
       return res.status(404).json({
         success: false,
-        message: "User not found"
-      });
-    }
-
-    if (user.isEmailVerified) {
-      return res.status(400).json({
-        success: false,
-        message: "Email already verified"
+        message: "Pending signup not found. Please sign up again."
       });
     }
 
     // Check if OTP is expired
-    if (new Date() > user.otpExpiry) {
+    if (new Date() > pending.otpExpiry) {
       return res.status(400).json({
         success: false,
         message: "OTP has expired. Please request a new one."
@@ -198,18 +196,45 @@ authRouter.post("/verify-otp", async (req, res) => {
     }
 
     // Verify OTP
-    if (user.emailVerificationOTP !== otp) {
+    if (pending.emailVerificationOTP !== otp) {
       return res.status(400).json({
         success: false,
         message: "Invalid OTP"
       });
     }
 
-    // Mark email as verified
-    user.isEmailVerified = true;
-    user.emailVerificationOTP = undefined;
-    user.otpExpiry = undefined;
+    // Create real user only after verification
+    const alreadyVerified = await User.findOne({ email });
+    if (alreadyVerified && alreadyVerified.isEmailVerified) {
+      await PendingUser.findByIdAndDelete(pending._id);
+      return res.status(400).json({
+        success: false,
+        message: "Email already verified"
+      });
+    }
+
+    const user = new User({
+      firstname: pending.firstname,
+      lastname: pending.lastname,
+      address: pending.address,
+      email: pending.email,
+      password: pending.password,
+      age: pending.age,
+      gender: pending.gender,
+      about: pending.about,
+      bio: pending.bio,
+      wantsToLearn: pending.wantsToLearn,
+      canTeach: pending.canTeach,
+      skills: pending.skills,
+      college: pending.college,
+      year: pending.year,
+      socialLinks: pending.socialLinks,
+      photoUrl: pending.photoUrl,
+      isEmailVerified: true,
+    });
+
     await user.save();
+    await PendingUser.findByIdAndDelete(pending._id);
 
     // Send welcome email (don't fail if it errors)
     try {
@@ -243,34 +268,65 @@ authRouter.post("/resend-otp", async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
-    
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found"
-      });
-    }
+    const pending = await PendingUser.findOne({ email });
 
-    if (user.isEmailVerified) {
-      return res.status(400).json({
-        success: false,
-        message: "Email already verified"
-      });
+    if (!pending) {
+      // Backward-compat: if legacy unverified user exists, keep old behavior.
+      const legacyUser = await User.findOne({ email });
+      if (!legacyUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Pending signup not found. Please sign up again."
+        });
+      }
+
+      if (legacyUser.isEmailVerified) {
+        return res.status(400).json({
+          success: false,
+          message: "Email already verified"
+        });
+      }
+
+      // Generate new OTP for legacy user
+      const otp = generateOTP();
+      const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      legacyUser.emailVerificationOTP = otp;
+      legacyUser.otpExpiry = otpExpiry;
+      await legacyUser.save();
+
+      const isDevelopment = process.env.NODE_ENV !== 'production';
+      try {
+        await sendOTPEmail(email, otp, legacyUser.firstname);
+        return res.status(200).json({
+          success: true,
+          message: "OTP resent successfully"
+        });
+      } catch (emailError) {
+        if (isDevelopment) {
+          return res.status(200).json({
+            success: true,
+            message: "OTP generated (email service unavailable)",
+            devMode: true,
+            otp: otp // Only in development!
+          });
+        }
+        throw emailError;
+      }
     }
 
     // Generate new OTP
     const otp = generateOTP();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
     
-    user.emailVerificationOTP = otp;
-    user.otpExpiry = otpExpiry;
-    await user.save();
+    pending.emailVerificationOTP = otp;
+    pending.otpExpiry = otpExpiry;
+    await pending.save();
 
     // Send OTP email - handle failures gracefully in development
     const isDevelopment = process.env.NODE_ENV !== 'production';
     try {
-      await sendOTPEmail(email, otp, user.firstname);
+      await sendOTPEmail(email, otp, pending.firstname);
       res.status(200).json({
         success: true,
         message: "OTP resent successfully"

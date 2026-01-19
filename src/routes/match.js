@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const User = require('../models/user');
 const ConnectionRequest = require('../models/connectionRequest');
 const { authMiddleware } = require('../middlewares/auth');
+const { normalizeSkillKeyList } = require('../utils/skillNormalization');
 
 const matchRouter = express.Router();
 
@@ -38,6 +39,9 @@ matchRouter.get('/matches', authMiddleware, async (req, res) => {
     // Convert to MongoDB ObjectIds
     const excludedUserIdsArray = Array.from(excludedUserIds).map(id => new mongoose.Types.ObjectId(id));
 
+    const currentWantsToLearnKeys = normalizeSkillKeyList(currentUser.wantsToLearn || []);
+    const currentCanTeachKeys = normalizeSkillKeyList(currentUser.canTeach || []);
+
     // Get matches using MongoDB aggregation
     const matches = await User.aggregate([
       {
@@ -50,37 +54,38 @@ matchRouter.get('/matches', authMiddleware, async (req, res) => {
       {
         // Add computed fields for intersections
         $addFields: {
-          // What user wants to learn that peer can teach
-          canLearnFromPeer: {
-            $size: {
-              $setIntersection: [
-                currentUser.wantsToLearn || [],
-                { $ifNull: ['$canTeach', []] }
-              ]
-            }
-          },
-          // What user can teach that peer wants to learn
-          canTeachToPeer: {
-            $size: {
-              $setIntersection: [
-                currentUser.canTeach || [],
-                { $ifNull: ['$wantsToLearn', []] }
-              ]
-            }
-          },
-          // Get actual intersection arrays
+          // Peer skills that match (case-insensitive) what current user wants to learn
           commonLearn: {
-            $setIntersection: [
-              currentUser.wantsToLearn || [],
-              { $ifNull: ['$canTeach', []] }
-            ]
+            $filter: {
+              input: { $ifNull: ['$canTeach', []] },
+              as: 'skill',
+              cond: {
+                $in: [
+                  { $toLower: { $trim: { input: '$$skill' } } },
+                  currentWantsToLearnKeys
+                ]
+              }
+            }
           },
+          // Peer wantsToLearn that match (case-insensitive) what current user can teach
           commonTeach: {
-            $setIntersection: [
-              currentUser.canTeach || [],
-              { $ifNull: ['$wantsToLearn', []] }
-            ]
+            $filter: {
+              input: { $ifNull: ['$wantsToLearn', []] },
+              as: 'skill',
+              cond: {
+                $in: [
+                  { $toLower: { $trim: { input: '$$skill' } } },
+                  currentCanTeachKeys
+                ]
+              }
+            }
           }
+        }
+      },
+      {
+        $addFields: {
+          canLearnFromPeer: { $size: '$commonLearn' },
+          canTeachToPeer: { $size: '$commonTeach' }
         }
       },
       {
@@ -156,13 +161,15 @@ matchRouter.get('/matches/:userId', authMiddleware, async (req, res) => {
       });
     }
 
-    // Calculate intersection
-    const commonLearn = (currentUser.wantsToLearn || []).filter(item => 
-      (targetUser.canTeach || []).includes(item)
+    const currentWantsToLearnKeys = new Set(normalizeSkillKeyList(currentUser.wantsToLearn || []));
+    const currentCanTeachKeys = new Set(normalizeSkillKeyList(currentUser.canTeach || []));
+
+    const commonLearn = (targetUser.canTeach || []).filter((skill) =>
+      currentWantsToLearnKeys.has(String(skill || '').trim().toLowerCase())
     );
-    
-    const commonTeach = (currentUser.canTeach || []).filter(item => 
-      (targetUser.wantsToLearn || []).includes(item)
+
+    const commonTeach = (targetUser.wantsToLearn || []).filter((skill) =>
+      currentCanTeachKeys.has(String(skill || '').trim().toLowerCase())
     );
 
     res.status(200).json({

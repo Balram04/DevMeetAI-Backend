@@ -3,6 +3,7 @@ const { authMiddleware } = require('../middlewares/auth');
 const { validprofiledata } = require('../models/utils/validators');
 const upload = require('../../config/multer');
 const { uploadToCloudinary, deleteFromCloudinary, extractPublicId } = require('../utils/cloudinaryUtils');
+const { normalizeSkillList } = require('../utils/skillNormalization');
 const proRouter = express.Router();
 const bcrypt = require('bcrypt'); // Import bcrypt
 
@@ -28,6 +29,16 @@ proRouter.patch("/profile/edit", authMiddleware, async (req, res) => {
     const loggedInUser = req.user;
     const { firstname, lastname, email, age, gender, about, skills, wantsToLearn, canTeach, photoUrl } = req.body;
 
+    const nextWantsToLearn = wantsToLearn !== undefined ? normalizeSkillList(wantsToLearn) : (loggedInUser.wantsToLearn || []);
+    const nextCanTeach = canTeach !== undefined ? normalizeSkillList(canTeach) : (loggedInUser.canTeach || []);
+
+    if (!Array.isArray(nextWantsToLearn) || nextWantsToLearn.length === 0) {
+      throw new Error("Please select at least 1 skill in 'Want to Learn'.");
+    }
+    if (!Array.isArray(nextCanTeach) || nextCanTeach.length === 0) {
+      throw new Error("Please select at least 1 skill in 'Can Teach'.");
+    }
+
     // Update only the fields that are provided
     if (firstname !== undefined) loggedInUser.firstname = firstname;
     if (lastname !== undefined) loggedInUser.lastname = lastname;
@@ -36,8 +47,8 @@ proRouter.patch("/profile/edit", authMiddleware, async (req, res) => {
     if (gender !== undefined) loggedInUser.gender = gender;
     if (about !== undefined) loggedInUser.about = about;
     if (skills !== undefined) loggedInUser.skills = skills;
-    if (wantsToLearn !== undefined) loggedInUser.wantsToLearn = wantsToLearn;
-    if (canTeach !== undefined) loggedInUser.canTeach = canTeach;
+    if (wantsToLearn !== undefined) loggedInUser.wantsToLearn = nextWantsToLearn;
+    if (canTeach !== undefined) loggedInUser.canTeach = nextCanTeach;
     if (photoUrl !== undefined) loggedInUser.photoUrl = photoUrl;
 
     await loggedInUser.save(); // Save updated user
